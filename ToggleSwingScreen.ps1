@@ -32,14 +32,14 @@ $RemainingSerial = 'HTHYS83'
 # Windows APIs
 # ============================================================
 
-if (-not ('PersistentSwingMonitorApi' -as [type])) {
+if (-not ('PersistentSwingMonitorApiV2' -as [type])) {
 
     Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
-public class DisplayDeviceMapping
+public class PersistentDisplayDeviceMappingV2
 {
     public string DeviceName { get; set; }
     public string MonitorName { get; set; }
@@ -48,7 +48,7 @@ public class DisplayDeviceMapping
     public bool Primary { get; set; }
 }
 
-public static class PersistentSwingMonitorApi
+public static class PersistentSwingMonitorApiV2
 {
     // ========================================================
     // Display-device discovery
@@ -90,10 +90,10 @@ public static class PersistentSwingMonitorApi
         uint dwFlags
     );
 
-    public static DisplayDeviceMapping[] GetDisplayDeviceMappings()
+    public static PersistentDisplayDeviceMappingV2[] GetPersistentDisplayDeviceMappingV2s()
     {
-        List<DisplayDeviceMapping> results =
-            new List<DisplayDeviceMapping>();
+        List<PersistentDisplayDeviceMappingV2> results =
+            new List<PersistentDisplayDeviceMappingV2>();
 
         uint adapterIndex = 0;
 
@@ -138,7 +138,7 @@ public static class PersistentSwingMonitorApi
                 }
 
                 results.Add(
-                    new DisplayDeviceMapping
+                    new PersistentDisplayDeviceMappingV2
                     {
                         DeviceName = adapterName,
                         MonitorName = monitor.DeviceString,
@@ -570,15 +570,20 @@ public static class PersistentSwingMonitorApi
     // rediscover it by serial and then persist our exact layout.
     public static int RestoreExtendedTopology()
     {
+        // Use the exact documented request for the last EXTEND
+        // configuration from the Windows persistence database.
+        //
+        // Do not add SDC_ALLOW_CHANGES or
+        // SDC_PATH_PERSIST_IF_REQUIRED here. We only need to
+        // reactivate the extended topology; PersistDualLayout()
+        // writes our exact preferred layout immediately afterward.
         return SetDisplayConfig(
             0,
             IntPtr.Zero,
             0,
             IntPtr.Zero,
             SDC_APPLY |
-            SDC_TOPOLOGY_EXTEND |
-            SDC_ALLOW_CHANGES |
-            SDC_PATH_PERSIST_IF_REQUIRED
+            SDC_TOPOLOGY_EXTEND
         );
     }
 
@@ -699,7 +704,7 @@ function Get-MonitorMappingsBySerial {
         ($hardwareId + '#' + $instanceId).ToUpperInvariant()
 
     $matches = @(
-        [PersistentSwingMonitorApi]::GetDisplayDeviceMappings() |
+        [PersistentSwingMonitorApiV2]::GetPersistentDisplayDeviceMappingV2s() |
         Where-Object {
             $_.MonitorDeviceId -and
             $_.MonitorDeviceId.ToUpperInvariant().Contains(
@@ -906,7 +911,7 @@ if ($SwingMonitor) {
     [int32]$ddcError = 0
 
     $success =
-        [PersistentSwingMonitorApi]::SetInput(
+        [PersistentSwingMonitorApiV2]::SetInput(
             $SwingMonitor.DeviceName,
             $HDMI,
             [ref]$oldInput,
@@ -943,7 +948,7 @@ if ($SwingMonitor) {
     # this state across sleep/wake rather than automatically
     # returning to dual-monitor mode.
     $result =
-        [PersistentSwingMonitorApi]::PersistSingleLayout(
+        [PersistentSwingMonitorApiV2]::PersistSingleLayout(
             $SwingMonitor.DeviceName,
             $RemainingMonitor.DeviceName
         )
@@ -995,7 +1000,7 @@ Write-Host ""
 # reactivates the swing display path even though the current
 # persistent state has it disabled.
 $result =
-    [PersistentSwingMonitorApi]::RestoreExtendedTopology()
+    [PersistentSwingMonitorApiV2]::RestoreExtendedTopology()
 
 if ($result -ne 0) {
 
@@ -1063,7 +1068,7 @@ Write-Host (
 #
 # This means dual mode also survives sleep/wake.
 $result =
-    [PersistentSwingMonitorApi]::PersistDualLayout(
+    [PersistentSwingMonitorApiV2]::PersistDualLayout(
         $SwingMonitor.DeviceName,
         $RemainingMonitor.DeviceName
     )
@@ -1107,7 +1112,7 @@ for ($attempt = 1; $attempt -le 12; $attempt++) {
     $ddcError = 0
 
     $success =
-        [PersistentSwingMonitorApi]::SetInput(
+        [PersistentSwingMonitorApiV2]::SetInput(
             $SwingMonitor.DeviceName,
             $DP,
             [ref]$oldInput,

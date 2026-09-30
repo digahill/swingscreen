@@ -1,29 +1,20 @@
 # ============================================================
 # ToggleSwingScreen.ps1
 #
-# Swing monitor:
-#   Dell S2421HS
-#   Serial: GHHYS83
+# Persistent toggle between:
 #
-# Remaining Windows monitor:
-#   Dell S2421HS
-#   Serial: HTHYS83
+#   SINGLE WINDOWS MODE
+#       HTHYS83 = only active Windows monitor, primary
+#       GHHYS83 = disabled in Windows
+#       GHHYS83 physical input = HDMI (Ubuntu)
 #
-# Toggle behavior:
+#   DUAL WINDOWS MODE
+#       GHHYS83 = primary Windows monitor at 0,0
+#       HTHYS83 = secondary Windows monitor to the right
+#       GHHYS83 physical input = DisplayPort
 #
-#   Dual-monitor Windows mode:
-#       -> switch swing monitor to HDMI
-#       -> detach swing monitor from Windows
-#       -> remaining monitor becomes primary
-#
-#   Single-monitor Windows mode:
-#       -> restore saved Windows dual-monitor layout
-#       -> rediscover swing monitor by EDID serial
-#       -> switch swing monitor to DisplayPort
-#
-# No DISPLAY1/DISPLAY2/DISPLAY3 values are hard-coded.
+# Monitors are identified by EDID serial number, not DISPLAY1/2/3.
 # ============================================================
-
 
 # ============================================================
 # Configuration
@@ -41,13 +32,12 @@ $RemainingSerial = 'HTHYS83'
 # Windows APIs
 # ============================================================
 
-if (-not ('ToggleSwingMonitorApi' -as [type])) {
+if (-not ('PersistentSwingMonitorApi' -as [type])) {
 
     Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
-
 
 public class DisplayDeviceMapping
 {
@@ -58,56 +48,35 @@ public class DisplayDeviceMapping
     public bool Primary { get; set; }
 }
 
-
-public static class ToggleSwingMonitorApi
+public static class PersistentSwingMonitorApi
 {
     // ========================================================
-    // EnumDisplayDevices
+    // Display-device discovery
     // ========================================================
 
-    [StructLayout(
-        LayoutKind.Sequential,
-        CharSet = CharSet.Unicode
-    )]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct DISPLAY_DEVICE
     {
         public int cb;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 32
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string DeviceName;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 128
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
         public string DeviceString;
 
         public uint StateFlags;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 128
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
         public string DeviceID;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 128
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
         public string DeviceKey;
     }
 
-    private const uint
-        DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
-
-    private const uint
-        DISPLAY_DEVICE_PRIMARY_DEVICE = 0x00000004;
-
-    private const uint
-        EDD_GET_DEVICE_INTERFACE_NAME = 0x00000001;
+    private const uint DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001;
+    private const uint DISPLAY_DEVICE_PRIMARY_DEVICE      = 0x00000004;
+    private const uint EDD_GET_DEVICE_INTERFACE_NAME      = 0x00000001;
 
     [DllImport(
         "user32.dll",
@@ -121,9 +90,7 @@ public static class ToggleSwingMonitorApi
         uint dwFlags
     );
 
-
-    public static DisplayDeviceMapping[]
-        GetDisplayDeviceMappings()
+    public static DisplayDeviceMapping[] GetDisplayDeviceMappings()
     {
         List<DisplayDeviceMapping> results =
             new List<DisplayDeviceMapping>();
@@ -132,11 +99,8 @@ public static class ToggleSwingMonitorApi
 
         while (true)
         {
-            DISPLAY_DEVICE adapter =
-                new DISPLAY_DEVICE();
-
-            adapter.cb =
-                Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+            DISPLAY_DEVICE adapter = new DISPLAY_DEVICE();
+            adapter.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
 
             if (!EnumDisplayDevices(
                 null,
@@ -147,32 +111,22 @@ public static class ToggleSwingMonitorApi
                 break;
             }
 
-            string adapterName =
-                adapter.DeviceName;
+            string adapterName = adapter.DeviceName;
 
             bool attached =
-                (
-                    adapter.StateFlags &
-                    DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
-                ) != 0;
+                (adapter.StateFlags &
+                 DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) != 0;
 
             bool primary =
-                (
-                    adapter.StateFlags &
-                    DISPLAY_DEVICE_PRIMARY_DEVICE
-                ) != 0;
+                (adapter.StateFlags &
+                 DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
 
             uint monitorIndex = 0;
 
             while (true)
             {
-                DISPLAY_DEVICE monitor =
-                    new DISPLAY_DEVICE();
-
-                monitor.cb =
-                    Marshal.SizeOf(
-                        typeof(DISPLAY_DEVICE)
-                    );
+                DISPLAY_DEVICE monitor = new DISPLAY_DEVICE();
+                monitor.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
 
                 if (!EnumDisplayDevices(
                     adapterName,
@@ -186,20 +140,11 @@ public static class ToggleSwingMonitorApi
                 results.Add(
                     new DisplayDeviceMapping
                     {
-                        DeviceName =
-                            adapterName,
-
-                        MonitorName =
-                            monitor.DeviceString,
-
-                        MonitorDeviceId =
-                            monitor.DeviceID,
-
-                        AttachedToDesktop =
-                            attached,
-
-                        Primary =
-                            primary
+                        DeviceName = adapterName,
+                        MonitorName = monitor.DeviceString,
+                        MonitorDeviceId = monitor.DeviceID,
+                        AttachedToDesktop = attached,
+                        Primary = primary
                     }
                 );
 
@@ -226,43 +171,26 @@ public static class ToggleSwingMonitorApi
         public int Bottom;
     }
 
-
-    [StructLayout(
-        LayoutKind.Sequential,
-        CharSet = CharSet.Unicode
-    )]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct MONITORINFOEX
     {
         public int cbSize;
-
         public RECT rcMonitor;
         public RECT rcWork;
-
         public uint dwFlags;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 32
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string szDevice;
     }
 
-
-    [StructLayout(
-        LayoutKind.Sequential,
-        CharSet = CharSet.Unicode
-    )]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct PHYSICAL_MONITOR
     {
         public IntPtr hPhysicalMonitor;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 128
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
         public string szPhysicalMonitorDescription;
     }
-
 
     private delegate bool MonitorEnumProc(
         IntPtr hMonitor,
@@ -271,7 +199,6 @@ public static class ToggleSwingMonitorApi
         IntPtr dwData
     );
 
-
     [DllImport("user32.dll")]
     private static extern bool EnumDisplayMonitors(
         IntPtr hdc,
@@ -279,7 +206,6 @@ public static class ToggleSwingMonitorApi
         MonitorEnumProc lpfnEnum,
         IntPtr dwData
     );
-
 
     [DllImport(
         "user32.dll",
@@ -291,66 +217,44 @@ public static class ToggleSwingMonitorApi
         ref MONITORINFOEX lpmi
     );
 
-
-    [DllImport(
-        "dxva2.dll",
-        SetLastError = true
-    )]
-    private static extern bool
-        GetNumberOfPhysicalMonitorsFromHMONITOR(
-            IntPtr hMonitor,
-            out uint count
-        );
-
+    [DllImport("dxva2.dll", SetLastError = true)]
+    private static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(
+        IntPtr hMonitor,
+        out uint count
+    );
 
     [DllImport(
         "dxva2.dll",
         SetLastError = true,
         CharSet = CharSet.Unicode
     )]
-    private static extern bool
-        GetPhysicalMonitorsFromHMONITOR(
-            IntPtr hMonitor,
-            uint count,
-            [Out] PHYSICAL_MONITOR[] monitors
-        );
+    private static extern bool GetPhysicalMonitorsFromHMONITOR(
+        IntPtr hMonitor,
+        uint count,
+        [Out] PHYSICAL_MONITOR[] monitors
+    );
 
+    [DllImport("dxva2.dll", SetLastError = true)]
+    private static extern bool GetVCPFeatureAndVCPFeatureReply(
+        IntPtr hMonitor,
+        byte vcpCode,
+        out uint type,
+        out uint currentValue,
+        out uint maximumValue
+    );
 
-    [DllImport(
-        "dxva2.dll",
-        SetLastError = true
-    )]
-    private static extern bool
-        GetVCPFeatureAndVCPFeatureReply(
-            IntPtr hMonitor,
-            byte vcpCode,
-            out uint type,
-            out uint currentValue,
-            out uint maximumValue
-        );
-
-
-    [DllImport(
-        "dxva2.dll",
-        SetLastError = true
-    )]
+    [DllImport("dxva2.dll", SetLastError = true)]
     private static extern bool SetVCPFeature(
         IntPtr hMonitor,
         byte vcpCode,
         uint newValue
     );
 
-
-    [DllImport(
-        "dxva2.dll",
-        SetLastError = true
-    )]
-    private static extern bool
-        DestroyPhysicalMonitors(
-            uint count,
-            PHYSICAL_MONITOR[] monitors
-        );
-
+    [DllImport("dxva2.dll", SetLastError = true)]
+    private static extern bool DestroyPhysicalMonitors(
+        uint count,
+        PHYSICAL_MONITOR[] monitors
+    );
 
     public static bool SetInput(
         string targetDevice,
@@ -371,20 +275,11 @@ public static class ToggleSwingMonitorApi
                 ref RECT rect,
                 IntPtr data)
         {
-            MONITORINFOEX mi =
-                new MONITORINFOEX();
+            MONITORINFOEX mi = new MONITORINFOEX();
+            mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
 
-            mi.cbSize =
-                Marshal.SizeOf(
-                    typeof(MONITORINFOEX)
-                );
-
-            if (!GetMonitorInfo(
-                hMonitor,
-                ref mi))
-            {
+            if (!GetMonitorInfo(hMonitor, ref mi))
                 return true;
-            }
 
             if (!String.Equals(
                 mi.szDevice,
@@ -402,9 +297,7 @@ public static class ToggleSwingMonitorApi
                 hMonitor,
                 out count))
             {
-                capturedError =
-                    Marshal.GetLastWin32Error();
-
+                capturedError = Marshal.GetLastWin32Error();
                 return false;
             }
 
@@ -422,9 +315,7 @@ public static class ToggleSwingMonitorApi
                 count,
                 monitors))
             {
-                capturedError =
-                    Marshal.GetLastWin32Error();
-
+                capturedError = Marshal.GetLastWin32Error();
                 return false;
             }
 
@@ -434,46 +325,34 @@ public static class ToggleSwingMonitorApi
                 uint current;
                 uint maximum;
 
-                if (
-                    GetVCPFeatureAndVCPFeatureReply(
-                        monitors[0].hPhysicalMonitor,
-                        0x60,
-                        out type,
-                        out current,
-                        out maximum
-                    )
-                )
+                if (GetVCPFeatureAndVCPFeatureReply(
+                    monitors[0].hPhysicalMonitor,
+                    0x60,
+                    out type,
+                    out current,
+                    out maximum))
                 {
-                    // Dell reports values such as
-                    // 0x0F0F. Low byte is the real value.
-                    capturedOldInput =
-                        current & 0xFF;
+                    // Dell may report 0x0F0F, etc.
+                    // Low byte is the actual MCCS value.
+                    capturedOldInput = current & 0xFF;
                 }
 
-                success =
-                    SetVCPFeature(
-                        monitors[0].hPhysicalMonitor,
-                        0x60,
-                        targetInput
-                    );
+                success = SetVCPFeature(
+                    monitors[0].hPhysicalMonitor,
+                    0x60,
+                    targetInput
+                );
 
                 if (!success)
-                {
-                    capturedError =
-                        Marshal.GetLastWin32Error();
-                }
+                    capturedError = Marshal.GetLastWin32Error();
             }
             finally
             {
-                DestroyPhysicalMonitors(
-                    count,
-                    monitors
-                );
+                DestroyPhysicalMonitors(count, monitors);
             }
 
             return false;
         };
-
 
         EnumDisplayMonitors(
             IntPtr.Zero,
@@ -482,36 +361,25 @@ public static class ToggleSwingMonitorApi
             IntPtr.Zero
         );
 
-        oldInput =
-            capturedOldInput;
+        oldInput = capturedOldInput;
 
-        if (!found &&
-            capturedError == 0)
-        {
+        if (!found && capturedError == 0)
             capturedError = -1;
-        }
 
-        error =
-            capturedError;
+        error = capturedError;
 
         return found && success;
     }
 
 
     // ========================================================
-    // Windows display topology
+    // Persistent Windows display topology
     // ========================================================
 
-    [StructLayout(
-        LayoutKind.Sequential,
-        CharSet = CharSet.Unicode
-    )]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct DEVMODE
     {
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 32
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string dmDeviceName;
 
         public short dmSpecVersion;
@@ -523,7 +391,6 @@ public static class ToggleSwingMonitorApi
 
         public int dmPositionX;
         public int dmPositionY;
-
         public int dmDisplayOrientation;
         public int dmDisplayFixedOutput;
 
@@ -533,10 +400,7 @@ public static class ToggleSwingMonitorApi
         public short dmTTOption;
         public short dmCollate;
 
-        [MarshalAs(
-            UnmanagedType.ByValTStr,
-            SizeConst = 32
-        )]
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string dmFormName;
 
         public short dmLogPixels;
@@ -557,22 +421,15 @@ public static class ToggleSwingMonitorApi
         public int dmPanningHeight;
     }
 
+    private const int ENUM_CURRENT_SETTINGS = -1;
 
-    private const int
-        ENUM_CURRENT_SETTINGS = -1;
+    private const int DM_POSITION   = 0x00000020;
+    private const int DM_PELSWIDTH  = 0x00080000;
+    private const int DM_PELSHEIGHT = 0x00100000;
 
-    private const int
-        DM_POSITION = 0x00000020;
-
-    private const int
-        DM_PELSWIDTH = 0x00080000;
-
-    private const int
-        DM_PELSHEIGHT = 0x00100000;
-
-    private const uint
-        CDS_SET_PRIMARY = 0x00000010;
-
+    private const uint CDS_UPDATEREGISTRY = 0x00000001;
+    private const uint CDS_SET_PRIMARY    = 0x00000010;
+    private const uint CDS_NORESET        = 0x10000000;
 
     [DllImport(
         "user32.dll",
@@ -585,111 +442,200 @@ public static class ToggleSwingMonitorApi
         ref DEVMODE devMode
     );
 
+    [DllImport(
+        "user32.dll",
+        CharSet = CharSet.Unicode,
+        EntryPoint = "ChangeDisplaySettingsExW"
+    )]
+    private static extern int ChangeDisplaySettingsEx(
+        string deviceName,
+        ref DEVMODE devMode,
+        IntPtr hwnd,
+        uint flags,
+        IntPtr lParam
+    );
 
     [DllImport(
         "user32.dll",
         CharSet = CharSet.Unicode,
         EntryPoint = "ChangeDisplaySettingsExW"
     )]
-    private static extern int
-        ChangeDisplaySettingsEx(
-            string deviceName,
-            ref DEVMODE devMode,
-            IntPtr hwnd,
-            uint flags,
-            IntPtr lParam
-        );
+    private static extern int ChangeDisplaySettingsExNull(
+        string deviceName,
+        IntPtr devMode,
+        IntPtr hwnd,
+        uint flags,
+        IntPtr lParam
+    );
 
+    // CCD / SetDisplayConfig:
+    // ask Windows for the last known EXTEND topology.
+    private const uint SDC_TOPOLOGY_EXTEND         = 0x00000004;
+    private const uint SDC_APPLY                   = 0x00000080;
+    private const uint SDC_ALLOW_CHANGES           = 0x00000400;
+    private const uint SDC_PATH_PERSIST_IF_REQUIRED = 0x00000800;
 
-    [DllImport(
-        "user32.dll",
-        CharSet = CharSet.Unicode,
-        EntryPoint = "ChangeDisplaySettingsExW"
-    )]
-    private static extern int
-        ChangeDisplaySettingsExNull(
-            string deviceName,
-            IntPtr devMode,
-            IntPtr hwnd,
-            uint flags,
-            IntPtr lParam
-        );
+    [DllImport("user32.dll")]
+    private static extern int SetDisplayConfig(
+        uint numPathArrayElements,
+        IntPtr pathArray,
+        uint numModeInfoArrayElements,
+        IntPtr modeInfoArray,
+        uint flags
+    );
 
-
-    public static int Detach(
-        string deviceName)
+    private static bool GetCurrentMode(
+        string deviceName,
+        out DEVMODE mode)
     {
-        DEVMODE mode =
-            new DEVMODE();
+        mode = new DEVMODE();
+        mode.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
 
-        mode.dmSize =
-            (short)Marshal.SizeOf(
-                typeof(DEVMODE)
-            );
-
-        if (!EnumDisplaySettings(
+        return EnumDisplaySettings(
             deviceName,
             ENUM_CURRENT_SETTINGS,
-            ref mode))
-        {
+            ref mode
+        );
+    }
+
+    // Persist:
+    //   remaining monitor = primary at 0,0
+    //   swing monitor     = detached
+    //
+    // Both changes are written to the user profile first,
+    // then applied together.
+    public static int PersistSingleLayout(
+        string swingDevice,
+        string remainingDevice)
+    {
+        DEVMODE swing;
+        DEVMODE remaining;
+
+        if (!GetCurrentMode(swingDevice, out swing))
             return -100;
-        }
 
-        mode.dmPelsWidth = 0;
-        mode.dmPelsHeight = 0;
+        if (!GetCurrentMode(remainingDevice, out remaining))
+            return -101;
 
-        mode.dmFields =
+        remaining.dmPositionX = 0;
+        remaining.dmPositionY = 0;
+        remaining.dmFields = DM_POSITION;
+
+        int result = ChangeDisplaySettingsEx(
+            remainingDevice,
+            ref remaining,
+            IntPtr.Zero,
+            CDS_UPDATEREGISTRY |
+            CDS_NORESET |
+            CDS_SET_PRIMARY,
+            IntPtr.Zero
+        );
+
+        if (result != 0 && result != 1)
+            return result;
+
+        swing.dmPositionX = 0;
+        swing.dmPositionY = 0;
+        swing.dmPelsWidth = 0;
+        swing.dmPelsHeight = 0;
+
+        swing.dmFields =
             DM_POSITION |
             DM_PELSWIDTH |
             DM_PELSHEIGHT;
 
-        return ChangeDisplaySettingsEx(
-            deviceName,
-            ref mode,
+        result = ChangeDisplaySettingsEx(
+            swingDevice,
+            ref swing,
+            IntPtr.Zero,
+            CDS_UPDATEREGISTRY |
+            CDS_NORESET,
+            IntPtr.Zero
+        );
+
+        if (result != 0 && result != 1)
+            return result;
+
+        return ChangeDisplaySettingsExNull(
+            null,
+            IntPtr.Zero,
             IntPtr.Zero,
             0,
             IntPtr.Zero
         );
     }
 
-
-    public static int MakePrimaryAtOrigin(
-        string deviceName)
+    // Ask Windows to reactivate its most recent EXTEND topology.
+    // This gets the disabled swing path active again so we can
+    // rediscover it by serial and then persist our exact layout.
+    public static int RestoreExtendedTopology()
     {
-        DEVMODE mode =
-            new DEVMODE();
-
-        mode.dmSize =
-            (short)Marshal.SizeOf(
-                typeof(DEVMODE)
-            );
-
-        if (!EnumDisplaySettings(
-            deviceName,
-            ENUM_CURRENT_SETTINGS,
-            ref mode))
-        {
-            return -100;
-        }
-
-        mode.dmPositionX = 0;
-        mode.dmPositionY = 0;
-
-        mode.dmFields =
-            DM_POSITION;
-
-        return ChangeDisplaySettingsEx(
-            deviceName,
-            ref mode,
+        return SetDisplayConfig(
+            0,
             IntPtr.Zero,
-            CDS_SET_PRIMARY,
-            IntPtr.Zero
+            0,
+            IntPtr.Zero,
+            SDC_APPLY |
+            SDC_TOPOLOGY_EXTEND |
+            SDC_ALLOW_CHANGES |
+            SDC_PATH_PERSIST_IF_REQUIRED
         );
     }
 
-
-    public static int RestoreSavedLayout()
+    // Persist the preferred dual-monitor layout:
+    //
+    //   swing     = primary at 0,0
+    //   remaining = immediately to the right of swing
+    //
+    // Current resolution/refresh values are preserved.
+    public static int PersistDualLayout(
+        string swingDevice,
+        string remainingDevice)
     {
+        DEVMODE swing;
+        DEVMODE remaining;
+
+        if (!GetCurrentMode(swingDevice, out swing))
+            return -100;
+
+        if (!GetCurrentMode(remainingDevice, out remaining))
+            return -101;
+
+        int swingWidth = swing.dmPelsWidth;
+
+        swing.dmPositionX = 0;
+        swing.dmPositionY = 0;
+        swing.dmFields = DM_POSITION;
+
+        remaining.dmPositionX = swingWidth;
+        remaining.dmPositionY = 0;
+        remaining.dmFields = DM_POSITION;
+
+        int result = ChangeDisplaySettingsEx(
+            swingDevice,
+            ref swing,
+            IntPtr.Zero,
+            CDS_UPDATEREGISTRY |
+            CDS_NORESET |
+            CDS_SET_PRIMARY,
+            IntPtr.Zero
+        );
+
+        if (result != 0 && result != 1)
+            return result;
+
+        result = ChangeDisplaySettingsEx(
+            remainingDevice,
+            ref remaining,
+            IntPtr.Zero,
+            CDS_UPDATEREGISTRY |
+            CDS_NORESET,
+            IntPtr.Zero
+        );
+
+        if (result != 0 && result != 1)
+            return result;
+
         return ChangeDisplaySettingsExNull(
             null,
             IntPtr.Zero,
@@ -747,15 +693,13 @@ function Get-MonitorMappingsBySerial {
     }
 
     $hardwareId = $parts[1]
-
-    $instanceId =
-        $parts[2] -replace '_\d+$', ''
+    $instanceId = $parts[2] -replace '_\d+$', ''
 
     $matchFragment =
         ($hardwareId + '#' + $instanceId).ToUpperInvariant()
 
     $matches = @(
-        [ToggleSwingMonitorApi]::GetDisplayDeviceMappings() |
+        [PersistentSwingMonitorApi]::GetDisplayDeviceMappings() |
         Where-Object {
             $_.MonitorDeviceId -and
             $_.MonitorDeviceId.ToUpperInvariant().Contains(
@@ -785,8 +729,6 @@ function Get-ActiveMonitorBySerial {
         Get-MonitorMappingsBySerial $Serial
     )
 
-    # Ignore stale/inactive Windows mappings.
-    # Collapse duplicates that refer to the same DISPLAYx.
     $active = @(
         $matches |
         Where-Object {
@@ -796,14 +738,11 @@ function Get-ActiveMonitorBySerial {
     )
 
     if ($active.Count -eq 0) {
-        # This is expected when the swing monitor has been
-        # deliberately detached from the Windows desktop.
         return $null
     }
 
     if ($active.Count -gt 1) {
-        $names =
-            ($active.DeviceName -join ', ')
+        $names = ($active.DeviceName -join ', ')
 
         throw (
             "Monitor serial '$Serial' is active on multiple " +
@@ -829,7 +768,8 @@ function Get-DisplayChangeResult {
         -4 { "Invalid flags" }
         -5 { "Invalid parameter" }
         -6 { "DualView configuration error" }
-        -100 { "Could not enumerate current display settings" }
+        -100 { "Could not enumerate swing display settings" }
+        -101 { "Could not enumerate remaining display settings" }
 
         default {
             "Unknown result: $Result"
@@ -856,8 +796,37 @@ function Get-InputName {
 }
 
 
+function Wait-ForActiveMonitor {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Serial,
+
+        [int]$Attempts = 24,
+        [int]$DelayMilliseconds = 250
+    )
+
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+
+        try {
+            $candidate = Get-ActiveMonitorBySerial $Serial
+
+            if ($candidate) {
+                return $candidate
+            }
+        }
+        catch {
+            # Display stack may still be settling.
+        }
+
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+
+    return $null
+}
+
+
 # ============================================================
-# Discover current monitor identities
+# Discover current state
 # ============================================================
 
 try {
@@ -884,30 +853,43 @@ catch {
 Write-Host ""
 
 if ($SwingMonitor) {
-    Write-Host "Swing monitor:" -ForegroundColor DarkGray
+
+    Write-Host "Current state: DUAL Windows monitors" `
+        -ForegroundColor DarkGray
+
     Write-Host (
-        "  {0} -> {1} (attached=True, primary={2})" -f
+        "  Swing:     {0} -> {1} (primary={2})" -f
             $SwingSerial,
             $SwingMonitor.DeviceName,
             $SwingMonitor.Primary
     ) -ForegroundColor DarkGray
+
+    Write-Host (
+        "  Remaining: {0} -> {1}" -f
+            $RemainingSerial,
+            $RemainingMonitor.DeviceName
+    ) -ForegroundColor DarkGray
 }
 else {
+
+    Write-Host "Current state: SINGLE Windows monitor" `
+        -ForegroundColor DarkGray
+
     Write-Host (
-        "Swing monitor $SwingSerial is not active in Windows."
+        "  Swing {0} is disabled in Windows." -f
+            $SwingSerial
+    ) -ForegroundColor DarkGray
+
+    Write-Host (
+        "  Remaining: {0} -> {1}" -f
+            $RemainingSerial,
+            $RemainingMonitor.DeviceName
     ) -ForegroundColor DarkGray
 }
 
 
 # ============================================================
-# STATE 1:
-#
-# Swing monitor is active in Windows.
-#
-# Give it to Ubuntu:
-#     DP -> HDMI
-#     detach from Windows
-#     remaining monitor -> primary
+# DUAL -> SINGLE
 # ============================================================
 
 if ($SwingMonitor) {
@@ -917,24 +899,22 @@ if ($SwingMonitor) {
         -ForegroundColor Cyan
     Write-Host ""
 
-
-    # --------------------------------------------------------
-    # Switch to HDMI while Windows still has a DDC handle.
-    # --------------------------------------------------------
-
+    # DDC must happen while the swing monitor is still active
+    # in Windows, because that is how we obtain its physical
+    # monitor handle.
     [uint32]$oldInput = 0
     [int32]$ddcError = 0
 
     $success =
-        [ToggleSwingMonitorApi]::SetInput(
+        [PersistentSwingMonitorApi]::SetInput(
             $SwingMonitor.DeviceName,
             $HDMI,
             [ref]$oldInput,
             [ref]$ddcError
         )
 
-
     if (-not $success) {
+
         Write-Host (
             "✗ Failed to switch {0} to HDMI" -f
                 $SwingMonitor.DeviceName
@@ -944,10 +924,8 @@ if ($SwingMonitor) {
         exit 1
     }
 
-
-    Write-Host (
-        "✓ Swing monitor switched to HDMI"
-    ) -ForegroundColor Green
+    Write-Host "✓ Swing monitor switched to HDMI" `
+        -ForegroundColor Green
 
     Write-Host (
         "  Previous input: {0}" -f
@@ -956,20 +934,24 @@ if ($SwingMonitor) {
 
     Start-Sleep -Milliseconds 400
 
-
-    # --------------------------------------------------------
-    # Detach swing monitor from Windows.
-    # --------------------------------------------------------
-
+    # Persist both parts of the single-monitor topology:
+    #
+    #   - remaining monitor becomes primary at 0,0
+    #   - swing monitor is disabled
+    #
+    # Because CDS_UPDATEREGISTRY is used, Windows should retain
+    # this state across sleep/wake rather than automatically
+    # returning to dual-monitor mode.
     $result =
-        [ToggleSwingMonitorApi]::Detach(
-            $SwingMonitor.DeviceName
+        [PersistentSwingMonitorApi]::PersistSingleLayout(
+            $SwingMonitor.DeviceName,
+            $RemainingMonitor.DeviceName
         )
 
-
     if ($result -ne 0) {
+
         Write-Host (
-            "✗ Failed to detach swing monitor from Windows"
+            "✗ Failed to persist Windows single-monitor mode"
         ) -ForegroundColor Red
 
         Write-Host (
@@ -980,75 +962,18 @@ if ($SwingMonitor) {
         exit 1
     }
 
-
     Write-Host (
-        "✓ Swing monitor detached from Windows"
+        "✓ Persistent single-monitor Windows layout saved"
     ) -ForegroundColor Green
 
-    Start-Sleep -Milliseconds 300
-
-
-    # --------------------------------------------------------
-    # Re-resolve the remaining monitor by serial in case
-    # Windows changed any logical display names.
-    # --------------------------------------------------------
-
-    try {
-        $RemainingMonitor =
-            Get-ActiveMonitorBySerial $RemainingSerial
-
-        if (-not $RemainingMonitor) {
-            throw "Remaining Windows monitor disappeared unexpectedly."
-        }
-
-    }
-    catch {
-        Write-Host (
-            "⚠ Could not rediscover remaining monitor: {0}" -f
-                $_.Exception.Message
-        ) -ForegroundColor Yellow
-
-        exit 1
-    }
-
-
-    # --------------------------------------------------------
-    # Make the remaining monitor the temporary primary at 0,0.
-    #
-    # This does NOT overwrite the saved dual-monitor layout.
-    # --------------------------------------------------------
-
-    $result =
-        [ToggleSwingMonitorApi]::MakePrimaryAtOrigin(
-            $RemainingMonitor.DeviceName
-        )
-
-
-    if ($result -eq 0) {
-
-        Write-Host (
-            "✓ {0} ({1}) is now Windows primary" -f
-                $RemainingSerial,
-                $RemainingMonitor.DeviceName
-        ) -ForegroundColor Green
-    }
-    else {
-
-        Write-Host (
-            "⚠ Windows could not explicitly set the remaining " +
-            "monitor primary"
-        ) -ForegroundColor Yellow
-
-        Write-Host (
-            "  {0}" -f
-                (Get-DisplayChangeResult $result)
-        )
-    }
-
+    Write-Host (
+        "✓ {0} is now the Windows primary monitor" -f
+            $RemainingSerial
+    ) -ForegroundColor Green
 
     Write-Host ""
     Write-Host (
-        "Windows is now in single-monitor mode."
+        "Windows is now in persistent single-monitor mode."
     ) -ForegroundColor Cyan
     Write-Host ""
 
@@ -1057,14 +982,7 @@ if ($SwingMonitor) {
 
 
 # ============================================================
-# STATE 2:
-#
-# Swing monitor is not active in Windows.
-#
-# Take it back:
-#     restore saved Windows dual-monitor configuration
-#     rediscover its current DISPLAYx name
-#     HDMI -> DP
+# SINGLE -> DUAL
 # ============================================================
 
 Write-Host ""
@@ -1073,14 +991,88 @@ Write-Host "Taking swing monitor back for Windows..." `
 Write-Host ""
 
 
+# Ask Windows for its most recent EXTEND topology. This
+# reactivates the swing display path even though the current
+# persistent state has it disabled.
 $result =
-    [ToggleSwingMonitorApi]::RestoreSavedLayout()
-
+    [PersistentSwingMonitorApi]::RestoreExtendedTopology()
 
 if ($result -ne 0) {
 
     Write-Host (
-        "✗ Failed to restore the saved Windows display layout"
+        "✗ Windows could not restore an extended display topology"
+    ) -ForegroundColor Red
+
+    Write-Host (
+        "  SetDisplayConfig result: $result"
+    )
+
+    exit 1
+}
+
+Write-Host "✓ Windows extended topology restored" `
+    -ForegroundColor Green
+
+
+# Rediscover both displays by SERIAL. Do not reuse an old
+# DISPLAY1/2/3 name because Windows may renumber them here.
+$SwingMonitor =
+    Wait-ForActiveMonitor $SwingSerial
+
+$RemainingMonitor =
+    Wait-ForActiveMonitor $RemainingSerial
+
+
+if (-not $SwingMonitor) {
+
+    Write-Host (
+        "✗ Extended mode was requested, but swing monitor " +
+        "$SwingSerial did not become active."
+    ) -ForegroundColor Red
+
+    exit 1
+}
+
+
+if (-not $RemainingMonitor) {
+
+    Write-Host (
+        "✗ Extended mode was requested, but remaining monitor " +
+        "$RemainingSerial did not become active."
+    ) -ForegroundColor Red
+
+    exit 1
+}
+
+
+Write-Host (
+    "✓ Swing monitor rediscovered as {0}" -f
+        $SwingMonitor.DeviceName
+) -ForegroundColor Green
+
+Write-Host (
+    "✓ Remaining monitor rediscovered as {0}" -f
+        $RemainingMonitor.DeviceName
+) -ForegroundColor Green
+
+
+# Explicitly persist our preferred dual layout:
+#
+#   swing     = primary, 0,0
+#   remaining = immediately to the right
+#
+# This means dual mode also survives sleep/wake.
+$result =
+    [PersistentSwingMonitorApi]::PersistDualLayout(
+        $SwingMonitor.DeviceName,
+        $RemainingMonitor.DeviceName
+    )
+
+if ($result -ne 0) {
+
+    Write-Host (
+        "✗ Windows re-enabled both monitors, but could not " +
+        "persist the preferred dual-monitor layout"
     ) -ForegroundColor Red
 
     Write-Host (
@@ -1093,59 +1085,17 @@ if ($result -ne 0) {
 
 
 Write-Host (
-    "✓ Saved Windows dual-monitor layout restored"
+    "✓ Persistent dual-monitor Windows layout saved"
 ) -ForegroundColor Green
-
-
-# ============================================================
-# Wait for the swing monitor to reappear.
-#
-# Important: rediscover it by SERIAL on every attempt.
-# We do not assume its old DISPLAYx name still exists.
-# ============================================================
-
-$SwingMonitor = $null
-
-for ($attempt = 1; $attempt -le 20; $attempt++) {
-
-    Start-Sleep -Milliseconds 250
-
-    try {
-        $candidate =
-            Get-ActiveMonitorBySerial $SwingSerial
-
-        if ($candidate) {
-            $SwingMonitor = $candidate
-            break
-        }
-    }
-    catch {
-        # Device stack may still be settling.
-    }
-}
-
-
-if (-not $SwingMonitor) {
-
-    Write-Host (
-        "✗ Windows restored its layout, but swing monitor " +
-        "$SwingSerial did not become active."
-    ) -ForegroundColor Red
-
-    exit 1
-}
-
 
 Write-Host (
-    "✓ Swing monitor rediscovered as {0}" -f
-        $SwingMonitor.DeviceName
+    "✓ $SwingSerial is primary; $RemainingSerial is to its right"
 ) -ForegroundColor Green
 
 
-# ============================================================
-# Switch the physical monitor back to DisplayPort.
-# ============================================================
-
+# The monitor is active in Windows again, so DDC should now
+# expose its physical handle. Retry briefly while the display
+# stack settles.
 $success = $false
 [uint32]$oldInput = 0
 [int32]$ddcError = 0
@@ -1157,25 +1107,19 @@ for ($attempt = 1; $attempt -le 12; $attempt++) {
     $ddcError = 0
 
     $success =
-        [ToggleSwingMonitorApi]::SetInput(
+        [PersistentSwingMonitorApi]::SetInput(
             $SwingMonitor.DeviceName,
             $DP,
             [ref]$oldInput,
             [ref]$ddcError
         )
 
-
     if ($success) {
         break
     }
 
-
-    # The Windows monitor topology may be restored slightly
-    # before DXVA2 exposes the physical DDC monitor handle.
     Start-Sleep -Milliseconds 250
 
-    # Resolve again in case Windows renamed DISPLAYx during
-    # the topology restoration.
     try {
         $candidate =
             Get-ActiveMonitorBySerial $SwingSerial
@@ -1214,6 +1158,6 @@ Write-Host (
 
 Write-Host ""
 Write-Host (
-    "Windows is back in its saved dual-monitor configuration."
+    "Windows is now in persistent dual-monitor mode."
 ) -ForegroundColor Cyan
 Write-Host ""
